@@ -48,7 +48,7 @@ async def get_current_user(
     result = await db.execute(select(User).where(User.clerk_id == clerk_id))
     user = result.scalar_one_or_none()
     if not user:
-        user = User(clerk_id=clerk_id, email="", name="")
+        user = User(clerk_id=clerk_id, email=None, name=None)
         db.add(user)
         await db.commit()
         await db.refresh(user)

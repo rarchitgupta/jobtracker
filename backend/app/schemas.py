@@ -9,6 +9,7 @@ class JobCreate(BaseModel):
     url: str | None = None
     domain: str | None = None
     source: str = "extension"
+    status: str = "applied"
 
 
 class JobResponse(BaseModel):

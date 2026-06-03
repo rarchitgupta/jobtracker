@@ -17,6 +17,7 @@ import type { Job, JobStatus } from "@/lib/types";
 
 const STATUS_OPTIONS: { value: JobStatus | "all"; label: string }[] = [
   { value: "all",          label: "All" },
+  { value: "shortlisted",  label: "Shortlisted" },
   { value: "applied",      label: "Applied" },
   { value: "phone_screen", label: "Phone Screen" },
   { value: "technical",    label: "Technical" },

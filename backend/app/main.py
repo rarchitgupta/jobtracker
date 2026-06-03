@@ -1,7 +1,7 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from .routers import jobs, webhooks
+from .routers import jobs, webhooks, gmail
 from .config import settings
 
 
@@ -22,3 +22,4 @@ app.add_middleware(
 
 app.include_router(jobs.router)
 app.include_router(webhooks.router)
+app.include_router(gmail.router)
