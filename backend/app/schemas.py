@@ -3,6 +3,10 @@ from datetime import datetime
 from pydantic import BaseModel
 
 
+class JobUpdate(BaseModel):
+    status: str | None = None
+
+
 class JobCreate(BaseModel):
     title: str
     company: str

@@ -1,11 +1,12 @@
+import uuid
 from urllib.parse import urlparse
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from ..database import get_db
 from ..models import Job, User
-from ..schemas import JobCreate, JobResponse
+from ..schemas import JobCreate, JobUpdate, JobResponse
 from ..services.dedup import find_duplicate
 from ..auth import get_current_user
 
@@ -36,6 +37,28 @@ async def create_job(
     return JSONResponse(
         status_code=201,
         content=JobResponse.model_validate(job).model_dump(mode="json"),
+    )
+
+
+@router.patch("/{job_id}")
+async def update_job(
+    job_id: uuid.UUID,
+    payload: JobUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Job).where(Job.id == job_id, Job.user_id == current_user.id)
+    )
+    job = result.scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if payload.status is not None:
+        job.status = payload.status
+    await db.commit()
+    await db.refresh(job)
+    return JSONResponse(
+        content=JobResponse.model_validate(job).model_dump(mode="json")
     )
 
 

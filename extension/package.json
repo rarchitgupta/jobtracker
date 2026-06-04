@@ -7,9 +7,12 @@
     "build": "vite build --mode development"
   },
   "dependencies": {
+    "@ai-sdk/openai": "^3.0.67",
     "@clerk/chrome-extension": "latest",
+    "ai": "^6.0.195",
     "react": "^19",
-    "react-dom": "^19"
+    "react-dom": "^19",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4",

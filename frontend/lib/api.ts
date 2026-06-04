@@ -20,6 +20,19 @@ export async function getJobs(token: string): Promise<Job[]> {
   return res.json();
 }
 
+export async function updateJob(
+  token: string,
+  jobId: string,
+  payload: { status?: string }
+): Promise<Job> {
+  const res = await authFetch(`${API_BASE}/jobs/${jobId}`, token, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(`Server error ${res.status}`);
+  return res.json();
+}
+
 export async function createJob(
   token: string,
   payload: { title: string; company: string; url?: string }

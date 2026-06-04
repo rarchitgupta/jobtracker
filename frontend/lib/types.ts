@@ -1,9 +1,7 @@
 export type JobStatus =
   | "shortlisted"
   | "applied"
-  | "phone_screen"
-  | "technical"
-  | "final"
+  | "interview"
   | "offer"
   | "rejected"
   | "ghosted";

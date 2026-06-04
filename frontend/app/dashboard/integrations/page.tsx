@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { useAuth } from "@clerk/nextjs";
-import { useSearchParams } from "next/navigation";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -13,18 +12,17 @@ interface GmailStatus {
 
 export default function IntegrationsPage() {
   const { getToken } = useAuth();
-  const searchParams = useSearchParams();
   const [gmail, setGmail] = useState<GmailStatus | null>(null);
   const [loading, setLoading] = useState(true);
-  const [banner, setBanner] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (searchParams.get("gmail") === "connected") {
-      setBanner("Gmail connected successfully.");
-      // clean the query param without a page reload
+  const [banner] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("gmail") === "connected") {
       window.history.replaceState({}, "", "/dashboard/integrations");
+      return "Gmail connected successfully.";
     }
-  }, [searchParams]);
+    return null;
+  });
 
   useEffect(() => {
     async function fetchStatus() {

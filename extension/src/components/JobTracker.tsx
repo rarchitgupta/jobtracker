@@ -1,24 +1,37 @@
 import { useEffect, useState } from 'react'
 import { useAuth, UserButton } from '@clerk/chrome-extension'
+import { generateObject } from 'ai'
+import { createOpenAI } from '@ai-sdk/openai'
+import { z } from 'zod'
 
-type View = 'scanning' | 'confirm' | 'success' | 'error'
+type View = 'scanning' | 'extracting' | 'confirm' | 'success' | 'error'
 type SaveStatus = 'applied' | 'shortlisted'
 
-interface ScrapedJob {
+interface Job {
   title: string
   company: string
   url: string
 }
 
 const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
+const MOONSHOT_KEY = import.meta.env.VITE_MOONSHOT_API_KEY as string | undefined
 
-// Runs in the page context — must be completely self-contained.
-function scrapeJobPage(): { title: string; company: string; url: string } {
+const kimi = MOONSHOT_KEY
+  ? createOpenAI({ baseURL: 'https://api.moonshot.cn/v1', apiKey: MOONSHOT_KEY })
+  : null
+
+const extractionSchema = z.object({
+  title: z.string().describe('Job title or position name. Empty string if not determinable.'),
+  company: z.string().describe('Company or organisation name. Empty string if not determinable.'),
+})
+
+// Runs in page context — must be completely self-contained, no imports or closures.
+function scrapeJobPage(): { title: string; company: string; url: string; pageText: string } {
   const hostname = window.location.hostname
   const pathParts = window.location.pathname.split('/').filter(Boolean)
 
-  function q(selector: string): string {
-    return (document.querySelector(selector) as HTMLElement)?.innerText?.trim() ?? ''
+  function q(sel: string): string {
+    return (document.querySelector(sel) as HTMLElement)?.innerText?.trim() ?? ''
   }
   function getMeta(prop: string): string {
     return (
@@ -27,7 +40,7 @@ function scrapeJobPage(): { title: string; company: string; url: string } {
       ''
     )
   }
-  function toTitleCase(s: string): string {
+  function titleCase(s: string): string {
     return s.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
   }
 
@@ -45,21 +58,21 @@ function scrapeJobPage(): { title: string; company: string; url: string } {
       q('.topcard__org-name-link')
   } else if (hostname.includes('greenhouse.io')) {
     title = q('.app-title') || q('#app_body h1') || q('h1')
-    // boards.greenhouse.io/<company>/jobs/<id>
-    company = q('.company-name') || toTitleCase(pathParts[0] ?? '')
+    company = q('.company-name') || titleCase(pathParts[0] ?? '')
   } else if (hostname.includes('lever.co')) {
     title = q('.posting-headline h2') || q('h2')
-    // jobs.lever.co/<company>/<id>
-    company = toTitleCase(pathParts[0] ?? '')
+    company = titleCase(pathParts[0] ?? '')
   } else if (hostname.includes('myworkdayjobs.com') || hostname.includes('workday.com')) {
     title =
       q('[data-automation-id="jobPostingHeader"]') ||
       q('h2[data-automation-id="jobTitle"]') ||
       q('h1')
-    // Extract company from subdomain: amazon.myworkdayjobs.com → Amazon
-    company = toTitleCase(hostname.split('.')[0] ?? '')
+    company = titleCase(hostname.split('.')[0] ?? '')
   } else if (hostname.includes('indeed.com')) {
-    title = q('h1.jobsearch-JobInfoHeader-title') || q('[data-testid="jobsearch-JobInfoHeader-title"]') || q('h1')
+    title =
+      q('h1.jobsearch-JobInfoHeader-title') ||
+      q('[data-testid="jobsearch-JobInfoHeader-title"]') ||
+      q('h1')
     company =
       q('[data-company-name]') ||
       q('[data-testid="inlineHeader-companyName"] a') ||
@@ -72,39 +85,72 @@ function scrapeJobPage(): { title: string; company: string; url: string } {
     company = q('.company-name') || getMeta('og:site_name')
   } else if (hostname.includes('ashbyhq.com') || hostname.includes('jobs.ashby.io')) {
     title = q('[class*="JobPostingTitle"]') || q('h1')
-    company = toTitleCase(pathParts[0] ?? '') || getMeta('og:site_name')
+    company = titleCase(pathParts[0] ?? '') || getMeta('og:site_name')
   }
 
-  // Generic fallback
   if (!title) title = getMeta('og:title') || q('h1') || document.title
   if (!company) company = getMeta('og:site_name') || ''
 
-  return { title, company, url: window.location.href }
+  const mainEl =
+    document.querySelector('main') ||
+    document.querySelector('[role="main"]') ||
+    document.querySelector('article') ||
+    document.body
+  const pageText = ((mainEl as HTMLElement)?.innerText ?? '').slice(0, 3000).trim()
+
+  return { title, company, url: window.location.href, pageText }
 }
 
 export function JobTracker() {
   const { getToken } = useAuth()
   const [view, setView] = useState<View>('scanning')
-  const [job, setJob] = useState<ScrapedJob>({ title: '', company: '', url: '' })
+  const [job, setJob] = useState<Job>({ title: '', company: '', url: '' })
   const [errorMsg, setErrorMsg] = useState('')
   const [savedStatus, setSavedStatus] = useState<SaveStatus>('applied')
   const [isDuplicate, setIsDuplicate] = useState(false)
+  const [aiUsed, setAiUsed] = useState(false)
 
-  useEffect(() => {
-    autoScan()
-  }, [])
+  useEffect(() => { autoScan() }, [])
 
   async function autoScan() {
+    setView('scanning')
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
+    let scraped = { title: '', company: '', url: '', pageText: '' }
+
     try {
       const [{ result }] = await chrome.scripting.executeScript({
         target: { tabId: tab.id! },
         func: scrapeJobPage,
       })
-      setJob(result as ScrapedJob)
+      scraped = result as typeof scraped
     } catch {
-      // Silently fall through — user can fill in manually
+      // silently fall through — user fills in manually
     }
+
+    setJob({ title: scraped.title, company: scraped.company, url: scraped.url })
+
+    const needsAI = kimi && scraped.pageText && (!scraped.title || !scraped.company)
+
+    if (needsAI) {
+      setView('extracting')
+      try {
+        const { object } = await generateObject({
+          model: kimi!('kimi-k2-5'),
+          output: 'object',
+          schema: extractionSchema,
+          prompt: buildExtractionPrompt(scraped),
+        })
+        setJob(j => ({
+          ...j,
+          title: j.title || object.title,
+          company: j.company || object.company,
+        }))
+        setAiUsed(true)
+      } catch {
+        // LLM failed — proceed with whatever DOM scraping found
+      }
+    }
+
     setView('confirm')
   }
 
@@ -137,7 +183,7 @@ export function JobTracker() {
 
   function resetToNew() {
     setJob({ title: '', company: '', url: '' })
-    setView('scanning')
+    setAiUsed(false)
     autoScan()
   }
 
@@ -155,15 +201,43 @@ export function JobTracker() {
 
       <div className="p-4">
         {view === 'scanning' && (
-          <div className="flex items-center gap-2 py-4 text-sm text-zinc-400">
+          <div className="flex items-center gap-2 py-6 text-sm text-zinc-400">
             <SpinnerIcon />
             Scanning page…
           </div>
         )}
 
+        {view === 'extracting' && (
+          <div className="space-y-3">
+            <div className="flex items-center gap-1.5">
+              <span className="flex size-5 items-center justify-center rounded bg-violet-100">
+                <SparklesIcon />
+              </span>
+              <span className="text-xs font-medium text-violet-700">Extracting with AI…</span>
+            </div>
+            <div className="space-y-2">
+              {job.title
+                ? <Field label="Title" value={job.title} onChange={v => setJob(j => ({ ...j, title: v }))} />
+                : <SkeletonField label="Title" />}
+              {job.company
+                ? <Field label="Company" value={job.company} onChange={v => setJob(j => ({ ...j, company: v }))} />
+                : <SkeletonField label="Company" />}
+              <SkeletonField label="URL" />
+            </div>
+          </div>
+        )}
+
         {view === 'confirm' && (
           <div className="space-y-3">
-            <p className="text-xs font-medium text-zinc-400 uppercase tracking-wide">Review &amp; Save</p>
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-medium text-zinc-400 uppercase tracking-wide">Review &amp; Save</p>
+              {aiUsed && (
+                <span className="inline-flex items-center gap-1 text-xs text-violet-500">
+                  <SparklesIcon />
+                  AI-extracted
+                </span>
+              )}
+            </div>
             <div className="space-y-2">
               <Field label="Title" value={job.title} onChange={v => setJob(j => ({ ...j, title: v }))} />
               <Field label="Company" value={job.company} onChange={v => setJob(j => ({ ...j, company: v }))} />
@@ -188,15 +262,13 @@ export function JobTracker() {
 
         {view === 'success' && (
           <div className="space-y-3 text-center py-2">
-            <div className={`inline-flex size-10 items-center justify-center rounded-full ${isDuplicate ? 'bg-amber-50' : savedStatus === 'shortlisted' ? 'bg-violet-50' : 'bg-green-50'}`}>
+            <div className={`inline-flex size-10 items-center justify-center rounded-full ${
+              isDuplicate ? 'bg-amber-50' : savedStatus === 'shortlisted' ? 'bg-violet-50' : 'bg-green-50'
+            }`}>
               {isDuplicate ? <RepeatIcon /> : savedStatus === 'shortlisted' ? <BookmarkIcon /> : <CheckIcon />}
             </div>
             <p className="text-sm font-medium">
-              {isDuplicate
-                ? 'Already tracking this job.'
-                : savedStatus === 'shortlisted'
-                ? 'Saved for later.'
-                : 'Job saved!'}
+              {isDuplicate ? 'Already tracking this job.' : savedStatus === 'shortlisted' ? 'Saved for later.' : 'Job saved!'}
             </p>
             <button
               onClick={resetToNew}
@@ -210,19 +282,27 @@ export function JobTracker() {
         {view === 'error' && (
           <div className="space-y-3">
             <p className="text-sm text-red-500">{errorMsg}</p>
-            <div className="flex gap-2">
-              <button
-                onClick={() => setView('confirm')}
-                className="flex-1 border border-zinc-200 text-sm py-2 px-4 rounded-md hover:bg-zinc-50 transition-colors cursor-pointer"
-              >
-                Go back
-              </button>
-            </div>
+            <button
+              onClick={() => setView('confirm')}
+              className="w-full border border-zinc-200 text-sm py-2 px-4 rounded-md hover:bg-zinc-50 transition-colors cursor-pointer"
+            >
+              Go back
+            </button>
           </div>
         )}
       </div>
     </div>
   )
+}
+
+function buildExtractionPrompt(scraped: { title: string; company: string; pageText: string }) {
+  return `Extract the job title and company name from this job posting page.
+${scraped.title ? `Title is already known: "${scraped.title}" — return it unchanged.` : 'Title is missing — extract it.'}
+${scraped.company ? `Company is already known: "${scraped.company}" — return it unchanged.` : 'Company is missing — extract it.'}
+If you cannot determine a field with confidence, return an empty string.
+
+Page text:
+${scraped.pageText}`
 }
 
 function Field({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
@@ -239,6 +319,15 @@ function Field({ label, value, onChange }: { label: string; value: string; onCha
   )
 }
 
+function SkeletonField({ label }: { label: string }) {
+  return (
+    <div className="space-y-1">
+      <label className="text-xs text-zinc-500">{label}</label>
+      <div className="h-[30px] rounded-md bg-zinc-100 animate-pulse" />
+    </div>
+  )
+}
+
 function BriefcaseIcon() {
   return (
     <svg className="size-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -249,9 +338,17 @@ function BriefcaseIcon() {
 
 function SpinnerIcon() {
   return (
-    <svg className="size-4 animate-spin text-zinc-400" fill="none" viewBox="0 0 24 24">
+    <svg className="size-4 animate-spin text-zinc-300" fill="none" viewBox="0 0 24 24">
       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+    </svg>
+  )
+}
+
+function SparklesIcon() {
+  return (
+    <svg className="size-3 text-violet-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456zM16.894 20.567L16.5 21.75l-.394-1.183a2.25 2.25 0 00-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 001.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 001.423 1.423l1.183.394-1.183.394a2.25 2.25 0 00-1.423 1.423z" />
     </svg>
   )
 }

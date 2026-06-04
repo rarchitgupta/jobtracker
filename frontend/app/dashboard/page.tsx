@@ -7,11 +7,11 @@ import {
 } from "@/components/ui/breadcrumb"
 import { Separator } from "@/components/ui/separator"
 import { SidebarTrigger } from "@/components/ui/sidebar"
-import { JobsTable } from "@/components/jobs-table"
+import { JobsKanban } from "@/components/jobs-kanban"
 
 export default function JobsPage() {
   return (
-    <>
+    <div className="flex flex-col h-full overflow-hidden">
       <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
         <SidebarTrigger className="-ml-1" />
         <Separator orientation="vertical" className="mr-2 data-vertical:h-4 data-vertical:self-auto" />
@@ -26,9 +26,9 @@ export default function JobsPage() {
           </BreadcrumbList>
         </Breadcrumb>
       </header>
-      <div className="flex flex-1 flex-col gap-6 px-8 py-8 max-w-6xl w-full mx-auto">
-        <JobsTable />
+      <div className="overflow-x-auto overflow-y-hidden px-6 py-4 h-[calc(100svh-3.5rem)]">
+        <JobsKanban />
       </div>
-    </>
+    </div>
   )
 }

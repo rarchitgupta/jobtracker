@@ -16,15 +16,13 @@ import {
 import type { Job, JobStatus } from "@/lib/types";
 
 const STATUS_OPTIONS: { value: JobStatus | "all"; label: string }[] = [
-  { value: "all",          label: "All" },
-  { value: "shortlisted",  label: "Shortlisted" },
-  { value: "applied",      label: "Applied" },
-  { value: "phone_screen", label: "Phone Screen" },
-  { value: "technical",    label: "Technical" },
-  { value: "final",        label: "Final Round" },
-  { value: "offer",        label: "Offer" },
-  { value: "rejected",     label: "Rejected" },
-  { value: "ghosted",      label: "Ghosted" },
+  { value: "all",         label: "All" },
+  { value: "shortlisted", label: "Shortlisted" },
+  { value: "applied",     label: "Applied" },
+  { value: "interview",   label: "Interview" },
+  { value: "offer",       label: "Offer" },
+  { value: "rejected",    label: "Rejected" },
+  { value: "ghosted",     label: "Ghosted" },
 ];
 
 function formatDate(iso: string) {
